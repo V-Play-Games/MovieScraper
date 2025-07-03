@@ -62,18 +62,36 @@ fun mergeCompatibleTables(tables: List<Element>): List<JSONArray> {
     return tables.groupBy { table -> table.getElementsByTag("th").joinToString { it.text() } }
         .values
         .map { similarTables ->
-            similarTables.map { parseTableToJson(it) }.flatten().toJSON()
-        }
+            similarTables.mapNotNull { parseTableToJson(it) }.flatten().toJSON()
+        }.filter { !it.isEmpty() }
 }
 
-fun parseTableToJson(table: Element): JSONArray {
-    val headers = table.getElementsByTag("th").map { it.text() }
+fun parseTableToJson(table: Element): JSONArray? {
+    val headers = table.getElementsByTag("th")
+        .also { header ->
+            header.attr("colspan")
+                .takeIf { it.isNotEmpty() }
+                ?.toInt()
+                ?.let {
+                    List(it) { i -> "$header$i" }
+                }
+        }
+        .map { it.text() }
+    if (headers.any {
+            it.lowercase().contains("awards") || it.lowercase().contains("box office") ||
+                    it.lowercase().contains("rank")
+        }) {
+        return null
+    }
     return table.getElementsByTag("tr")
         .drop(1)
         .map { row ->
             row.getElementsByTag("td")
-                .take(headers.size)
-                .mapIndexed { index, cell -> headers[index] to cell.text() }
+                .mapIndexedNotNull { index, cell ->
+                    if (cell.text().isNotEmpty()) {
+                        headers[index] to cell.text()
+                    } else null
+                }
                 .toMap()
                 .toJSON()
         }.toJSON()
