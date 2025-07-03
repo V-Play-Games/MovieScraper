@@ -53,6 +53,7 @@ fun main(): Unit = runBlocking {
         }
         .also { println("Writing to file...") }
         .mapToResult()
+        .also { list -> list.map { it.toMap().entries }.flatten().map { it.key }.distinct().forEach(::println) }
         .toJSON()
         .toPrettyString()
         .also { File("cleanedData.json").writeText(it) }
