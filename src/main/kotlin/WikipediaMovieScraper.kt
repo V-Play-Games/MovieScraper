@@ -1,7 +1,11 @@
 import kotlinx.coroutines.runBlocking
+import net.vpg.vjson.value.JSONArray
+import net.vpg.vjson.value.JSONArray.Companion.toJSON
+import net.vpg.vjson.value.JSONObject
+import net.vpg.vjson.value.JSONObject.Companion.toJSON
 import org.jsoup.Jsoup
+import org.jsoup.nodes.Element
 import java.io.File
-import kotlin.text.substringAfterLast
 
 const val BASE_URL = "https://en.wikipedia.org/wiki"
 val moveListLinkRegex = "List_of_([A-Za-z_]+)_films_of_\\d+".toRegex()
@@ -30,7 +34,49 @@ fun main(): Unit = runBlocking {
         }
         .filterSuccessful()
         .filter { it.result.isNotEmpty() }
-        .forEach { (file, tables) -> println("${file.parentFile.name}/${file.nameWithoutExtension}: ${tables.size}") }
+        .executeTask("Merge Tables") { file, tables ->
+            mergeCompatibleTables(tables)
+        }
+        .flattenTaskResults()
+        .flattenTaskResults()
+        .mapResults { it.toObject() }
+        .executeTask("Inject Year and Category") { file, obj ->
+            obj.put("year", file.parentFile.name.toInt())
+            obj.put("category", file.nameWithoutExtension)
+        }
+        .executeTask("Clean Keys") { _, obj ->
+            val cleanedData = JSONObject()
+            obj.toMap().forEach { (key, value) ->
+                cleanedData.put(key.lowercase().replace(" ", "_"), value)
+            }
+            return@executeTask cleanedData
+        }
+        .also { println("Writing to file...") }
+        .mapToResult()
+        .toJSON()
+        .toPrettyString()
+        .also { File("cleanedData.json").writeText(it) }
+}
+
+fun mergeCompatibleTables(tables: List<Element>): List<JSONArray> {
+    return tables.groupBy { table -> table.getElementsByTag("th").joinToString { it.text() } }
+        .values
+        .map { similarTables ->
+            similarTables.map { parseTableToJson(it) }.flatten().toJSON()
+        }
+}
+
+fun parseTableToJson(table: Element): JSONArray {
+    val headers = table.getElementsByTag("th").map { it.text() }
+    return table.getElementsByTag("tr")
+        .drop(1)
+        .map { row ->
+            row.getElementsByTag("td")
+                .take(headers.size)
+                .mapIndexed { index, cell -> headers[index] to cell.text() }
+                .toMap()
+                .toJSON()
+        }.toJSON()
 }
 
 fun getFilmLists(yearFile: File) = Jsoup.parse(yearFile)

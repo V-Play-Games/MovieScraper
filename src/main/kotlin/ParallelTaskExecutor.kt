@@ -132,7 +132,7 @@ suspend fun <T, R> List<TaskResult<T, R>>.executeScrapeTask(
         }
     }.mapResults()
 
-fun <T, R> List<TaskResult<T, List<R>>>.flattenTaskResults(): List<TaskResult<T, R>> =
+fun <T, R> List<TaskResult<T, out Iterable<R>>>.flattenTaskResults(): List<TaskResult<T, R>> =
     this.flatMap { taskResult ->
         when (taskResult) {
             is TaskResult.Success -> taskResult.result.map { result -> TaskResult.Success(taskResult.task, result) }
