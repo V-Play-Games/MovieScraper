@@ -73,6 +73,7 @@ fun parseTableToJson(table: Element): JSONArray? {
             header.attr("colspan")
                 .takeIf { it.isNotEmpty() }
                 ?.toInt()
+                ?.takeIf { it < 4 }
                 ?.let { List(it) { i -> "${header.text()}$i" } }
                 ?: listOf(header.text())
         }
@@ -88,10 +89,11 @@ fun parseTableToJson(table: Element): JSONArray? {
         .drop(1)
         .map { row ->
             row.getElementsByTag("td")
+                .map { td -> td.text() }
                 .take(headers.size)
                 .mapIndexedNotNull { index, cell ->
-                    if (cell.text().isNotEmpty()) {
-                        headers[index] to cell.text()
+                    if (cell.isNotEmpty()) {
+                        headers[index] to cell
                     } else null
                 }
                 .toMap()
