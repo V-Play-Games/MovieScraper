@@ -15,27 +15,26 @@ fun main() {
     val table = document.selectFirst("table")!!
 
     val rows = table.select("tr")
-    val headers = mutableListOf<String>()
-    val data = mutableListOf<Map<String, String>>()
-
-    // Parse headers
-    val headerCells = rows.first()!!.select("th, td")
-    headerCells.forEach { headers.add(it.text()) }
-
-    // Matrix tracker for col/row spans
-    val cellMatrix = mutableListOf<MutableList<String?>>()
+    val headers = rows.first()!!
+        .select("th, td")
+        .map { header ->
+            header.attr("colspan")
+                .takeIf { it.isNotEmpty() }
+                ?.toInt()
+                ?.takeIf { it < 4 }
+                ?.let { List(it) { i -> "${header.text()}$i" } }
+                ?: listOf(header.text())
+        }
+        .flatten()
 
     // Parse rows
     // Track rowspans: for each column, how many more rows it should fill
     val rowspanTrack = MutableList(headers.size) { 0 }
     val rowspanValues = MutableList<String?>(headers.size) { null }
-    for (i in 1 until rows.size) {
-        val row = rows[i]
-        val cells = row.select("td")
-
+    rows.drop(1).map { row ->
         // Prepare rowList, pre-fill with values from rowspans
         val rowList = MutableList<String?>(headers.size) { null }
-        for (col in headers.indices) {
+        headers.indices.forEach { col ->
             if (rowspanTrack[col] > 0) {
                 rowList[col] = rowspanValues[col]
                 rowspanTrack[col]--
@@ -43,7 +42,7 @@ fun main() {
         }
 
         var colIndex = 0
-        for (cell in cells) {
+        row.select("td, th").forEach { cell ->
             // Find next available colIndex
             while (colIndex < headers.size && rowList[colIndex] != null) colIndex++
             val value = cell.text()
@@ -61,16 +60,8 @@ fun main() {
             }
             colIndex += colspan
         }
-        cellMatrix.add(rowList)
-    }
-
-    // Convert matrix to list of maps
-    for (row in cellMatrix) {
-        val rowMap = mutableMapOf<String, String>()
-        for (j in headers.indices) {
-            rowMap[headers[j]] = row[j] ?: ""
+        return@map headers.indices.associate { j ->
+            headers[j] to (rowList[j] ?: "")
         }
-        data.add(rowMap)
-    }
-    data.toJSON().toPrettyString().also { println(it) }
+    }.toJSON().toPrettyString().also { println(it) }
 }
