@@ -69,25 +69,26 @@ fun mergeCompatibleTables(tables: List<Element>): List<JSONArray> {
 
 fun parseTableToJson(table: Element): JSONArray? {
     val headers = table.getElementsByTag("th")
-        .also { header ->
+        .map { header ->
             header.attr("colspan")
                 .takeIf { it.isNotEmpty() }
                 ?.toInt()
-                ?.let {
-                    List(it) { i -> "$header$i" }
-                }
+                ?.let { List(it) { i -> "${header.text()}$i" } }
+                ?: listOf(header.text())
         }
-        .map { it.text() }
+        .flatten()
     if (headers.any {
             it.lowercase().contains("awards") || it.lowercase().contains("box office") ||
                     it.lowercase().contains("rank")
         }) {
         return null
     }
+    if (headers.isEmpty()) return null
     return table.getElementsByTag("tr")
         .drop(1)
         .map { row ->
             row.getElementsByTag("td")
+                .take(headers.size)
                 .mapIndexedNotNull { index, cell ->
                     if (cell.text().isNotEmpty()) {
                         headers[index] to cell.text()
