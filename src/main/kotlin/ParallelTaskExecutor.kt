@@ -100,7 +100,6 @@ fun <T, R1, R2> List<TaskResult<TaskResult<T, R1>, R2>>.mapResults(): List<TaskR
         }
     }
 
-
 suspend fun <T> List<T>.executeScrapeTask(
     taskIdentifier: String,
     threadCount: Int = Runtime.getRuntime().availableProcessors(),

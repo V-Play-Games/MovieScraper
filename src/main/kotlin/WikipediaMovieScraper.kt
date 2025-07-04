@@ -1,7 +1,6 @@
 import kotlinx.coroutines.runBlocking
 import net.vpg.vjson.value.JSONArray
 import net.vpg.vjson.value.JSONArray.Companion.toJSON
-import net.vpg.vjson.value.JSONObject
 import net.vpg.vjson.value.JSONObject.Companion.toJSON
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
@@ -34,44 +33,106 @@ fun main(): Unit = runBlocking {
         }
         .filterSuccessful()
         .filter { it.result.isNotEmpty() }
-        .executeTask("Merge Tables") { file, tables ->
-            mergeCompatibleTables(tables)
-        }
         .flattenTaskResults()
+        .executeTask("Parse Tables") { file, tables -> parseTableToJson(tables) }
+        .filterSuccessful()
+        .filter { (_, array) -> array != null }
+        .mapResults { it!! }
         .flattenTaskResults()
         .mapResults { it.toObject() }
+        .also {
+            it.also { println("Writing Raw Data to file...") }
+                .mapToResult()
+                .toJSON()
+                .toPrettyString()
+                .also { File("rawData.json").writeText(it) }
+        }
+        .executeTask("Clean Keys") { _, obj ->
+            obj.toMap()
+                .keys
+                .map { it to cleanKey(it) }
+                .filter { it.second != null }
+                .map { it.second to obj.getString(it.first) }
+                .filter { it.second.isNotEmpty() }
+                .toMap()
+                .toJSON()
+        }
+        .filterSuccessful()
+        .filter { (_, obj) -> !obj.isEmpty() }
         .executeTask("Inject Year and Category") { file, obj ->
             obj.put("year", file.parentFile.name.toInt())
             obj.put("category", file.nameWithoutExtension)
         }
-        .executeTask("Clean Keys") { _, obj ->
-            val cleanedData = JSONObject()
-            obj.toMap().forEach { (key, value) ->
-                cleanedData.put(key.lowercase().replace(" ", "_"), value)
-            }
-            return@executeTask cleanedData
-        }
         .also { println("Writing to file...") }
         .mapToResult()
-        .also { list -> list.map { it.toMap().entries }.flatten().map { it.key }.distinct().forEach(::println) }
+//        .also { list -> list.map { it.toMap().entries }.flatten().map { it.key }.distinct().forEach(::println) }
         .toJSON()
         .toPrettyString()
         .also { File("cleanedData.json").writeText(it) }
-    println(debugMap)
 }
 
-fun mergeCompatibleTables(tables: List<Element>): List<JSONArray> {
-    return tables.groupBy { table -> table.getElementsByTag("th").joinToString { it.text() } }
-        .values
-        .map { similarTables ->
-            similarTables.mapNotNull { parseTableToJson(it) }.flatten().toJSON()
-        }.filter { !it.isEmpty() }
-}
+fun cleanKey(key: String) = key.lowercase().replace(" ", "_").let {
+    when (it) {
+        "title",
+        "title[1]",
+        "titles",
+        "english/korean_title",
+        "english_title",
+        "f_title",
+        "title_(latin)_english",
+        "title_(native_title)",
+        "director0",
+        "movie_name",
+        "punjabi",
+        "lollywood",
+        "film",
+        "films",
+        "name",
+        "movies",
+        "movie",
+        "pashto"
+            -> "title"
 
-val debugMap = mutableMapOf<Int, MutableSet<Int>>()
+        "director(s)",
+        "director",
+        "director1",
+        "'director",
+        "director/",
+        "direction",
+        "directed_by",
+        "actor(s)"
+            -> "director"
+
+        "cast",
+        "featured_cast",
+        "cast_and_crew",
+        "cast_(subject_of_documentary)",
+        "cast_cast",
+        "cast_&_crew",
+        "british_cast_and_crew",
+        "british/uk_cast_and_crew",
+        "casta",
+        "main_cast",
+        "main_actors",
+        "actors",
+        "actro"
+            -> "cast"
+
+        "genre",
+        "genre/note",
+        "genre(s)",
+        "subgenre/notes",
+        "subgenre"
+            -> "genre"
+
+        else -> null
+    }
+}
 
 fun parseTableToJson(table: Element): JSONArray? {
-    val headers = table.getElementsByTag("th")
+    val rows = table.select("tr")
+    val headers = rows.first()!!
+        .select("th, td")
         .map { header ->
             header.attr("colspan")
                 .takeIf { it.isNotEmpty() }
@@ -81,27 +142,49 @@ fun parseTableToJson(table: Element): JSONArray? {
                 ?: listOf(header.text())
         }
         .flatten()
-    if (headers.any {
-            it.lowercase().contains("awards") || it.lowercase().contains("box office") ||
+    if (headers.isEmpty() || headers.any {
+            it.lowercase().contains("awards") ||
+                    it.lowercase().contains("box office") ||
                     it.lowercase().contains("rank")
-        }) {
-        return null
-    }
-    if (headers.isEmpty()) return null
-    return table.getElementsByTag("tr")
-        .drop(1)
-        .map { row ->
-            row.getElementsByTag("td")
-                .map { td -> td.text() }
-                .take(headers.size)
-                .mapIndexedNotNull { index, cell ->
-                    if (cell.isNotEmpty()) {
-                        headers[index] to cell
-                    } else null
+        }) return null
+
+    // Parse rows
+    // Track rowspans: for each column, how many more rows it should fill
+    val rowspanTrack = MutableList(headers.size) { 0 }
+    val rowspanValues = MutableList<String?>(headers.size) { null }
+    return rows.drop(1).map { row ->
+        // Prepare rowList, pre-fill with values from rowspans
+        val rowList = MutableList<String?>(headers.size) { null }
+        headers.indices.forEach { col ->
+            if (rowspanTrack[col] > 0) {
+                rowList[col] = rowspanValues[col]
+                rowspanTrack[col]--
+            }
+        }
+
+        var colIndex = 0
+        row.select("td, th").forEach { cell ->
+            // Find next available colIndex
+            while (colIndex < headers.size && rowList[colIndex] != null) colIndex++
+            val value = cell.text()
+            val colspan = cell.attr("colspan").toIntOrNull() ?: 1
+            val rowspan = cell.attr("rowspan").toIntOrNull() ?: 1
+            for (c in 0 until colspan) {
+                val targetCol = colIndex + c
+                if (targetCol < headers.size) {
+                    rowList[targetCol] = value
+                    if (rowspan > 1) {
+                        rowspanTrack[targetCol] = rowspan - 1
+                        rowspanValues[targetCol] = value
+                    }
                 }
-                .toMap()
-                .toJSON()
-        }.toJSON()
+            }
+            colIndex += colspan
+        }
+        return@map headers.indices.associate { j ->
+            headers[j] to (rowList[j] ?: "")
+        }
+    }.toJSON()
 }
 
 fun getFilmLists(yearFile: File) = Jsoup.parse(yearFile)
