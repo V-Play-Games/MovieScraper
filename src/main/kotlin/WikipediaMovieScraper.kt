@@ -57,6 +57,7 @@ fun main(): Unit = runBlocking {
         .toJSON()
         .toPrettyString()
         .also { File("cleanedData.json").writeText(it) }
+    println(debugMap)
 }
 
 fun mergeCompatibleTables(tables: List<Element>): List<JSONArray> {
@@ -66,6 +67,8 @@ fun mergeCompatibleTables(tables: List<Element>): List<JSONArray> {
             similarTables.mapNotNull { parseTableToJson(it) }.flatten().toJSON()
         }.filter { !it.isEmpty() }
 }
+
+val debugMap = mutableMapOf<Int, MutableSet<Int>>()
 
 fun parseTableToJson(table: Element): JSONArray? {
     val headers = table.getElementsByTag("th")
