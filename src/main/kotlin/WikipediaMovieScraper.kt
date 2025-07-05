@@ -34,14 +34,16 @@ fun main(): Unit = runBlocking {
         .filterSuccessful()
         .filter { it.result.isNotEmpty() }
         .flattenTaskResults()
-        .executeTask("Parse Tables") { file, tables -> parseTableToJson(tables) }
+        .executeTask("Parse Tables") { file, tables ->
+            parseTableToJson(tables)
+        }
         .filterSuccessful()
         .filter { (_, array) -> array != null }
         .mapResults { it!! }
         .flattenTaskResults()
         .mapResults { it.toObject() }
-        .also {
-            it.also { println("Writing Raw Data to file...") }
+        .also { rawData ->
+            rawData.also { println("Writing Raw JSON to file...") }
                 .mapToResult()
                 .toJSON()
                 .toPrettyString()
@@ -63,12 +65,26 @@ fun main(): Unit = runBlocking {
             obj.put("year", file.parentFile.name.toInt())
             obj.put("category", file.nameWithoutExtension)
         }
-        .also { println("Writing to file...") }
+        .also { println("Writing Cleaned JSON to file...") }
         .mapToResult()
-//        .also { list -> list.map { it.toMap().entries }.flatten().map { it.key }.distinct().forEach(::println) }
         .toJSON()
-        .toPrettyString()
-        .also { File("cleanedData.json").writeText(it) }
+        .also { File("cleanedData.json").writeText(it.toPrettyString()) }
+        .map { it.toObject() }
+        .executeTask("Convert to CSV") {
+            """
+            ${it.getString("title", "")},
+            ${it.getString("director", "")},
+            ${it.getString("cast", "")},
+            ${it.getString("genre", "")},
+            ${it.getString("year", "")},
+            ${it.getString("category", "")}
+            """.trimIndent().replace("\n", "")
+        }
+        .also { println("Writing CSV to file...") }
+        .mapToResult()
+        .joinToString("\n")
+        .also { File("cleanedData.csv").writeText("title,director,cast,genre,year,category\n") }
+        .also { File("cleanedData.csv").appendText(it) }
 }
 
 fun cleanKey(key: String) = key.lowercase().replace(" ", "_").let {
@@ -191,4 +207,3 @@ fun getFilmLists(yearFile: File) = Jsoup.parse(yearFile)
     .body()
     .getElementsByTag("a")
     .filter { it.attr("href").startsWith("/wiki/List_of_") }
-
